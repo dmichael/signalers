@@ -1,71 +1,97 @@
+%%%-------------------------------------------------------------------
+%%% File    : actuator.erl
+%%% Author  : David Michael <david.michael@gmail.com>
+%%% Description : Actuator for Signalers
+%%%
+%%% Created :  
+%%%-------------------------------------------------------------------
 -module(actuator).
--behaviour(gen_fsm).
 
--export([start/1]).
--export([signal/1]).
--export([init/1, waiting/2, signaling/2, refracting/2]).
+-behaviour(gen_server).
 
-% start_link/4
-%
-% Start the FSM and register it locally as "actuator"
-%
-% The first argument {local, code_lock} specifies the name
-% The second argument is the name of the callback module
-% The third argument, Code, is a term which is passed as-is to the callback function init
-% The fourth argument, [], is a list of options
+%% API
+-export([start_link/0]).
 
-start(Code) ->
-  gen_fsm:start_link({local, actuator}, actuator, Code, []).
+%% gen_server callbacks
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+         terminate/2, code_change/3]).
 
-% ------
-% Events
-% ------
+-record(state, {}).
+-define(SERVER, ?MODULE).
 
-% gen_fsm:send_event(FsmRef, Event) -> ok
-  
-signal(Number) ->
-  gen_fsm:send_event(actuator, Number).
-      
-% receive(StateData) ->
-%   gen_fsm:send_event(actuator, {signal, StateData}).  
+%%====================================================================
+%% API
+%%====================================================================
+%%--------------------------------------------------------------------
+%% Function: start_link() -> {ok,Pid} | ignore | {error,Error}
+%% Description: Starts the server
+%%--------------------------------------------------------------------
+start_link() ->
+  gen_server:start_link(?MODULE, [], []).
 
-% The new gen_fsm process calls the callback function init. This function is expected to return {ok, StateName, StateData}, where StateName is the name of the initial state of the gen_fsm
+%%====================================================================
+%% gen_server callbacks
+%%====================================================================
 
-init(Code) ->
-  io:format("initializing actuator.~n"),
-  {ok, waiting, {[], Code}}.
+%%--------------------------------------------------------------------
+%% Function: init(Args) -> {ok, State} |
+%%                         {ok, State, Timeout} |
+%%                         ignore               |
+%%                         {stop, Reason}
+%% Description: Initiates the server
+%%--------------------------------------------------------------------
+init([]) ->
+  {ok, #state{}}.
 
-% -----------------
-% State transitions = [ready, signaling, refracting]
-% -----------------
+%%--------------------------------------------------------------------
+%% Function: %% handle_call(Request, From, State) -> {reply, Reply, State} |
+%%                                      {reply, Reply, State, Timeout} |
+%%                                      {noreply, State} |
+%%                                      {noreply, State, Timeout} |
+%%                                      {stop, Reason, Reply, State} |
+%%                                      {stop, Reason, State}
+%% Description: Handling call messages
+%%--------------------------------------------------------------------
+handle_call(_Request, _From, State) ->
+  Reply = ok,
+  {reply, Reply, State}.
 
-% The state transition rules are written as a number of Erlang functions which conform to the following convention:
-%
-% StateName(Event, StateData) ->
-%     .. code for actions here ...
-%     {next_state, StateName', StateData'}
-%
-% There should be one instance of this function for each possible state name
+%%--------------------------------------------------------------------
+%% Function: handle_cast(Msg, State) -> {noreply, State} |
+%%                                      {noreply, State, Timeout} |
+%%                                      {stop, Reason, State}
+%% Description: Handling cast messages
+%%--------------------------------------------------------------------
+handle_cast(_Msg, State) ->
+  {noreply, State}.
 
-waiting(Event, {current, State}) ->
-  io:format("waiting.~n"),
-  
-  case {current, State} of
-    {current, waiting} ->
-      io:format("waiting.~n"),
-      {next_state, signaling, {[], Code}}.
-  end.  
-  
-  
-  
-  
-signaling(Event, {[], Code}) ->
-  io:format("signaling.~n"),
-  % ... trigger the actuator ...
-  {next_state, refracting, {[], Code}}.
-  
-  
-refracting(Event, {[], Code}) ->
-  io:format("refracting.~n"),
-  {next_state, ready, {[], Code}}.
-  
+%%--------------------------------------------------------------------
+%% Function: handle_info(Info, State) -> {noreply, State} |
+%%                                       {noreply, State, Timeout} |
+%%                                       {stop, Reason, State}
+%% Description: Handling all non call/cast messages
+%%--------------------------------------------------------------------
+handle_info(_Info, State) ->
+  {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% Function: terminate(Reason, State) -> void()
+%% Description: This function is called by a gen_server when it is about to
+%% terminate. It should be the opposite of Module:init/1 and do any necessary
+%% cleaning up. When it returns, the gen_server terminates with Reason.
+%% The return value is ignored.
+%%--------------------------------------------------------------------
+terminate(_Reason, _State) ->
+  ok.
+
+%%--------------------------------------------------------------------
+%% Func: code_change(OldVsn, State, Extra) -> {ok, NewState}
+%% Description: Convert process state when code is changed
+%%--------------------------------------------------------------------
+code_change(_OldVsn, State, _Extra) ->
+  {ok, State}.
+
+%%--------------------------------------------------------------------
+%%% Internal functions
+%%--------------------------------------------------------------------
+
