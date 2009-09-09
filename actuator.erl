@@ -10,7 +10,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/1, stop/1, actuate/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -26,8 +26,17 @@
 %% Function: start_link() -> {ok,Pid} | ignore | {error,Error}
 %% Description: Starts the server
 %%--------------------------------------------------------------------
-start_link() ->
-  gen_server:start_link(?MODULE, [], []).
+start_link(ParentPid) ->
+  gen_server:start_link(?MODULE, [ParentPid], []).
+  
+stop(Pid) ->
+    gen_server:cast(Pid, stop).
+    
+actuate(Pid, Data) ->
+  io:format("~p (~p) received ~p actuate from ~p...~n", [?MODULE, self(), Data, Pid]),
+  
+  % io:format("~p (~p) received actuate from (~p) ...~n", [?MODULE, self(), Pid]),
+  gen_server:cast(Pid, Data).
 
 %%====================================================================
 %% gen_server callbacks
@@ -40,8 +49,11 @@ start_link() ->
 %%                         {stop, Reason}
 %% Description: Initiates the server
 %%--------------------------------------------------------------------
-init([]) ->
-  {ok, #state{}}.
+init([ParentPid]) ->
+  io:format("~p (~p) starting ...~n", [?MODULE, self()]),
+  erlang:monitor(process, ParentPid),
+  State = dict:store(actuator_fsm, ParentPid, dict:new()),
+  {ok, State}.
 
 %%--------------------------------------------------------------------
 %% Function: %% handle_call(Request, From, State) -> {reply, Reply, State} |
@@ -62,6 +74,19 @@ handle_call(_Request, _From, State) ->
 %%                                      {stop, Reason, State}
 %% Description: Handling cast messages
 %%--------------------------------------------------------------------
+    
+handle_cast({signal, Data}, State) ->
+  io:format("I SHOULD BE FUCKING SIGNALING!!~n"),
+  timer:sleep(1000),
+  io:format("(done)"),
+  
+  {_Status, Pid} = dict:find(actuator_fsm, State),
+  actuator_fsm:finished(Pid, []),
+  {noreply, State};
+  
+handle_cast(stop, State) ->
+    {stop, normal, State};
+    
 handle_cast(_Msg, State) ->
   {noreply, State}.
 
@@ -71,6 +96,10 @@ handle_cast(_Msg, State) ->
 %%                                       {stop, Reason, State}
 %% Description: Handling all non call/cast messages
 %%--------------------------------------------------------------------
+handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) ->
+  io:format("parent down (actuator_fsm)!~n"),
+  % stop myself if my actuator goes down
+  {stop, normal, State};
 handle_info(_Info, State) ->
   {noreply, State}.
 

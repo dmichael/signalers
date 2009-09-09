@@ -11,16 +11,17 @@
 
 %% API
 -export([
-  start_link/1,
+  start_link/0,
   trigger/2,
-  finished/2
+  finished/2,
+  stop/1
 ]).
 
 %% gen_fsm callbacks
 -export([ready/2, signaling/2, refracting/2, ready/3]).
 
 -export([init/1, handle_event/3,
-         handle_sync_event/4, handle_info/3, terminate/3, code_change/4, cancel/0]).
+         handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
 -define(SERVER, ?MODULE).
 
@@ -33,8 +34,8 @@
 %% initialize. To ensure a synchronized start-up procedure, this function
 %% does not return until Module:init/1 has returned.  
 %%--------------------------------------------------------------------
-start_link(Actuator) ->
-  gen_fsm:start_link(?MODULE, [Actuator], []).
+start_link() ->
+  gen_fsm:start_link(?MODULE, [], []).
 
 %%--------------------------------------------------------------------
 %% Function: trigger(Pid, Data) -> ok
@@ -42,19 +43,17 @@ start_link(Actuator) ->
 %%--------------------------------------------------------------------
 trigger(Pid, Data) ->
   gen_fsm:send_event(Pid, {trigger, Data}).
-  
-actuate() ->
-  io:format("SIGNAL!~n").
 
 finished(Pid, Data) ->
+  io:format("IM DONE!~n"),
   gen_fsm:send_event(Pid, {finished, Data}).  
 
 %%--------------------------------------------------------------------
 %% Function: cancel/0
 %% Description: Cancels the ATM transaction no matter what state.
 %%--------------------------------------------------------------------
-cancel() ->
-  gen_fsm:send_all_state_event(?SERVER, cancel).
+stop(Pid) ->
+  gen_fsm:send_all_state_event(Pid, stop).
 
 %%====================================================================
 %% gen_fsm callbacks
@@ -68,11 +67,19 @@ cancel() ->
 %% gen_fsm:start_link/3,4, this function is called by the new process to 
 %% initialize. 
 %%--------------------------------------------------------------------
-init([Actuator]) ->
+init([]) ->
   process_flag(trap_exit, true),
   io:format("~p (~p) starting ...~n", [?MODULE, self()]),
-  StateData = dict:store(timeout, 1000, dict:new()),
-  {ok, ready, StateData}.
+  
+  {_Status, Pid} = actuator:start_link(self()),
+  io:format("~p (~p) registered actuator (~p)...~n", [?MODULE, self(), Pid]),
+  
+  erlang:monitor(process, Pid),
+  % The actuator can still be orphaned if this FSM goes down... how do we avoid this?
+  
+  StateData = dict:store(timeout, 10000, dict:new()),
+  StateData1 = dict:store(actuator, Pid, StateData),
+  {ok, ready, StateData1}.
 
 %%--------------------------------------------------------------------
 %% Function: 
@@ -85,34 +92,57 @@ init([Actuator]) ->
 %% the current state name StateName is called to handle the event. It is also 
 %% called if a timeout occurs. 
 %%--------------------------------------------------------------------
+
+%%-------------------------
+%% READY
+%%-------------------------
+
 ready({trigger, Data}, StateData) ->
   io:format("trigger: ready -> signaling~n"),
-  actuate(),
-  {next_state, signaling, StateData};
+  {_Status, Pid} = dict:find(actuator, StateData),
+  
+  % io:format("~p (~p) actuating actuator (~p) ...~n", [?MODULE, self(), Pid]),
+  % actuate(Pid),
+  actuator:actuate(Pid, {signal, []}),
+  {next_state, refracting, StateData};
+  
 % catch all
 ready(timeout, StateData) ->
   % reset the signaler for next signal
   io:format("ready(timeout)~n"),
   {next_state, ready, StateData};
+  
 ready(_Event, StateData) ->
   {next_state, ready, StateData}.
 
+%%-------------------------
+%% SIGNALING
+%%-------------------------
+
 % In the signaling state we match on a finished message to change state
 signaling({finished, Data}, StateData) ->
-  io:format("signal finished: signaling -> refracting~n"),
-  {next_state, refracting, StateData};
+  {_Status, Timeout} = dict:find(timeout, StateData),
+  io:format("refracting, nothing to do, will timeout automatically~p~n", [Timeout]),
+  {next_state, ready, StateData, 1};
+  
 % In the signaling state if a trigger is received, there is nothing to do.
 signaling(_Event, StateData) ->
   {next_state, signaling, StateData}.
 
-refracting({trigger, Data}, StateData) ->
-  {_Status, Timeout} = dict:find(timeout, StateData),
-  io:format("refracting, nothing to do, will timeout automatically~p~n", [Timeout]),
-  {next_state, ready, StateData, Timeout};
+%%-------------------------
+%% REFRACTING
+%%-------------------------
+
+% refracting({trigger, Data}, StateData) ->
+%   {_Status, Timeout} = dict:find(timeout, StateData),
+%   io:format("refracting, nothing to do, will timeout automatically~p~n", [Timeout]),
+%   {next_state, ready, StateData, Timeout};
+  
 % catch all
 refracting(_Event, StateData) ->
-  io:format("refracting unmatched"),
-  {next_state, refracting, StateData}.  
+  {_Status, Timeout} = dict:find(timeout, StateData),
+  io:format("refracting, nothing to do, will timeout automatically~p~n", [Timeout]),
+  {next_state, refracting, StateData, Timeout}.  
   
 
 %%--------------------------------------------------------------------
@@ -135,19 +165,17 @@ ready({trigger, Data}, From, State) ->
 
 %%--------------------------------------------------------------------
 %% Function: 
-%% handle_event(Event, StateName, State) -> {next_state, NextStateName, 
-%%						  NextState} |
-%%                                          {next_state, NextStateName, 
-%%					          NextState, Timeout} |
+%% handle_event(Event, StateName, State) -> {next_state, NextStateName, NextState} |
+%%                                          {next_state, NextStateName, NextState, Timeout} |
 %%                                          {stop, Reason, NewState}
 %% Description: Whenever a gen_fsm receives an event sent using
 %% gen_fsm:send_all_state_event/2, this function is called to handle
 %% the event.
 %%--------------------------------------------------------------------
-handle_event(cancel, _StateName, _State) ->
-  {next_state, unauthorized, nobody};
-handle_event(_Event, StateName, State) ->
-  {next_state, StateName, State}.
+handle_event(stop, _StateName, StateData) ->
+  {stop, normal, StateData};
+handle_event(_Event, StateName, StateData) ->
+  {next_state, StateName, StateData}.
 
 %%--------------------------------------------------------------------
 %% Function: 
@@ -178,6 +206,10 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %% other message than a synchronous or asynchronous event
 %% (or a system message).
 %%--------------------------------------------------------------------
+handle_info({'DOWN', _Ref, process, _Pid, _Reason}, _StateName, State) ->
+  io:format("man down (actuator)!~n"),
+  % stop myself if my actuator goes down
+  {stop, normal, State};
 handle_info(_Info, StateName, State) ->
   {next_state, StateName, State}.
 

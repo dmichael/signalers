@@ -38,9 +38,13 @@ start_link() ->
 %% specifications.
 %%--------------------------------------------------------------------
 init([]) ->
-  %Actuator = { actuator, {actuator, start_link, []}, permanent, 2000, worker, [actuator] },
-  ActuatorFSM = { actuator_fsm, {actuator_fsm, start_link,Actuator},permanent,2000,worker,[actuator_fsm]},
-  {ok,{{one_for_one,5,10}, [ActuatorFSM]}}.
+  io:format("~p (~p) starting...~n", [?MODULE, self()]),
+  
+  ActuatorFSM = {actuator_fsm, {actuator_fsm, start_link, []},
+		   permanent, 5000, worker, [actuator_fsm]},
+  
+  {ok, {{one_for_all, 5, 30}, [ActuatorFSM]}}.
+
 
 %%====================================================================
 %% Internal functions
