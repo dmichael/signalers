@@ -16,7 +16,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {}).
 -define(SERVER, ?MODULE).
 
 %%====================================================================
@@ -33,7 +32,7 @@ stop(Pid) ->
     gen_server:cast(Pid, stop).
     
 actuate(Pid, Data) ->
-  io:format("~p (~p) received ~p actuate from ~p...~n", [?MODULE, self(), Data, Pid]),
+  io:format("~p (~p) received ~p actuate from ~p.~n", [?MODULE, self(), Data, Pid]),
   
   % io:format("~p (~p) received actuate from (~p) ...~n", [?MODULE, self(), Pid]),
   gen_server:cast(Pid, Data).
@@ -75,10 +74,13 @@ handle_call(_Request, _From, State) ->
 %% Description: Handling cast messages
 %%--------------------------------------------------------------------
     
-handle_cast({signal, Data}, State) ->
-  io:format("I SHOULD BE FUCKING SIGNALING!!~n"),
-  timer:sleep(1000),
-  io:format("(done)"),
+handle_cast({signal, Period}, State) ->
+  io:format("~p (~p) signaling ...~n", [?MODULE, self()]),
+  
+  % this should be managed differently
+  SignalLength = Period - 2500,
+  timer:sleep(SignalLength),
+  io:format("~p (~p) done.~n", [?MODULE, self()]),
   
   {_Status, Pid} = dict:find(actuator_fsm, State),
   actuator_fsm:finished(Pid, []),

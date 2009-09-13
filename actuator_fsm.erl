@@ -12,6 +12,7 @@
 %% API
 -export([
   start_link/0,
+  stimulate/1,
   trigger/2,
   finished/2,
   stop/1
@@ -45,9 +46,12 @@ trigger(Pid, Data) ->
   gen_fsm:send_event(Pid, {trigger, Data}).
 
 finished(Pid, Data) ->
-  io:format("IM DONE!~n"),
   gen_fsm:send_event(Pid, {finished, Data}).  
-
+  
+stimulate(Pid) ->
+  io:format("heard something.~n"),
+  gen_fsm:send_event(Pid, stimulate).
+  
 %%--------------------------------------------------------------------
 %% Function: cancel/0
 %% Description: Cancels the ATM transaction no matter what state.
@@ -71,15 +75,22 @@ init([]) ->
   process_flag(trap_exit, true),
   io:format("~p (~p) starting ...~n", [?MODULE, self()]),
   
-  {_Status, Pid} = actuator:start_link(self()),
-  io:format("~p (~p) registered actuator (~p)...~n", [?MODULE, self(), Pid]),
+  Period = 3000,
   
-  erlang:monitor(process, Pid),
+  {_, ActuatorPid}   = actuator:start_link(self()),
+  io:format("~p (~p) registered actuator (~p)...~n", [?MODULE, self(), ActuatorPid]),
+  
+  OscillatorPid = oscillator:spawn_link(self(), Period, {}),
+  io:format("~p (~p) registered oscillator (~p)...~n", [?MODULE, self(), OscillatorPid]),
+    
+  % erlang:monitor(process, ActuatorPid),
   % The actuator can still be orphaned if this FSM goes down... how do we avoid this?
   
-  StateData = dict:store(timeout, 10000, dict:new()),
-  StateData1 = dict:store(actuator, Pid, StateData),
-  {ok, ready, StateData1}.
+  StateData  = dict:store(period, Period, dict:new()),
+  StateData1 = dict:store(actuator, ActuatorPid, StateData),
+  StateData2 = dict:store(oscillator, OscillatorPid, StateData1),
+  
+  {ok, ready, StateData2}.
 
 %%--------------------------------------------------------------------
 %% Function: 
@@ -97,19 +108,24 @@ init([]) ->
 %% READY
 %%-------------------------
 
-ready({trigger, Data}, StateData) ->
-  io:format("trigger: ready -> signaling~n"),
-  {_Status, Pid} = dict:find(actuator, StateData),
+ready({trigger, _Data}, StateData) ->
+  io:format("~p (~p) event received: ready -> signaling~n", [?MODULE, self()]),
   
-  % io:format("~p (~p) actuating actuator (~p) ...~n", [?MODULE, self(), Pid]),
-  % actuate(Pid),
-  actuator:actuate(Pid, {signal, []}),
-  {next_state, refracting, StateData};
+  ActuatorPid = dict:fetch(actuator, StateData),
+  Period = dict:fetch(period, StateData),
+
+  actuator:actuate(ActuatorPid, {signal, Period}),
+  {next_state, signaling, StateData};
   
-% catch all
 ready(timeout, StateData) ->
   % reset the signaler for next signal
   io:format("ready(timeout)~n"),
+  {next_state, ready, StateData};
+  
+ready(stimulate, StateData) ->
+  io:format("ready(stimulate)~n"),
+  {_, Pid} = dict:find(oscillator, StateData),
+  Pid ! stimulate,
   {next_state, ready, StateData};
   
 ready(_Event, StateData) ->
@@ -120,10 +136,10 @@ ready(_Event, StateData) ->
 %%-------------------------
 
 % In the signaling state we match on a finished message to change state
-signaling({finished, Data}, StateData) ->
-  {_Status, Timeout} = dict:find(timeout, StateData),
-  io:format("refracting, nothing to do, will timeout automatically~p~n", [Timeout]),
-  {next_state, ready, StateData, 1};
+signaling({finished, _Data}, StateData) ->
+  io:format("~p (~p) event received (finished): signaling -> ready~n", [?MODULE, self()]),
+  %{_Status, Timeout} = dict:find(period, StateData),
+  {next_state, ready, StateData};
   
 % In the signaling state if a trigger is received, there is nothing to do.
 signaling(_Event, StateData) ->
@@ -140,7 +156,7 @@ signaling(_Event, StateData) ->
   
 % catch all
 refracting(_Event, StateData) ->
-  {_Status, Timeout} = dict:find(timeout, StateData),
+  {_Status, Timeout} = dict:find(period, StateData),
   io:format("refracting, nothing to do, will timeout automatically~p~n", [Timeout]),
   {next_state, refracting, StateData, Timeout}.  
   
@@ -158,7 +174,7 @@ refracting(_Event, StateData) ->
 %% gen_fsm:sync_send_event/2,3, the instance of this function with the same
 %% name as the current state name StateName is called to handle the event.
 %%--------------------------------------------------------------------
-ready({trigger, Data}, From, State) ->
+ready({trigger, _Data}, _From, State) ->
   io:format("ready -> signaling"),
   {reply, ok, signaling, State}.
 
