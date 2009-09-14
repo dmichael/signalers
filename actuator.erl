@@ -10,11 +10,21 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, stop/1, actuate/2]).
+-export([
+  start_link/1, 
+  stop/1, 
+  actuate/2
+]).
 
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([
+  init/1, 
+  handle_call/3, 
+  handle_cast/2, 
+  handle_info/2,
+  terminate/2, 
+  code_change/3
+]).
 
 -define(SERVER, ?MODULE).
 
@@ -75,15 +85,17 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
     
 handle_cast({signal, Period}, State) ->
-  io:format("~p (~p) signaling ...~n", [?MODULE, self()]),
+  io:format("~p (~p) SIGNALING ...~n", [?MODULE, self()]),
   
+  ParentPid = dict:fetch(actuator_fsm, State),
+  actuator_fsm:started(ParentPid),
+    
   % this should be managed differently
   SignalLength = Period - 2500,
   timer:sleep(SignalLength),
-  io:format("~p (~p) done.~n", [?MODULE, self()]),
+  io:format("~p (~p) DONE.~n", [?MODULE, self()]),
   
-  {_Status, Pid} = dict:find(actuator_fsm, State),
-  actuator_fsm:finished(Pid, []),
+  actuator_fsm:finished(ParentPid, []),
   {noreply, State};
   
 handle_cast(stop, State) ->

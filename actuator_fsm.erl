@@ -14,12 +14,18 @@
   start_link/0,
   stimulate/1,
   trigger/2,
+  started/1,
   finished/2,
   stop/1
 ]).
 
 %% gen_fsm callbacks
--export([ready/2, signaling/2, refracting/2, ready/3]).
+-export([
+  ready/2, 
+  signaling/2, 
+  refracting/2, 
+  ready/3
+]).
 
 -export([init/1, handle_event/3,
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
@@ -45,6 +51,9 @@ start_link() ->
 trigger(Pid, Data) ->
   gen_fsm:send_event(Pid, {trigger, Data}).
 
+started(Pid) ->
+  gen_fsm:send_event(Pid, started).
+  
 finished(Pid, Data) ->
   gen_fsm:send_event(Pid, {finished, Data}).  
   
@@ -72,10 +81,11 @@ stop(Pid) ->
 %% initialize. 
 %%--------------------------------------------------------------------
 init([]) ->
-  process_flag(trap_exit, true),
   io:format("~p (~p) starting ...~n", [?MODULE, self()]),
-  
+  process_flag(trap_exit, true),
+
   Period = 3000,
+  PropDelay = 250,
   
   {_, ActuatorPid}   = actuator:start_link(self()),
   io:format("~p (~p) registered actuator (~p)...~n", [?MODULE, self(), ActuatorPid]),
@@ -83,14 +93,14 @@ init([]) ->
   OscillatorPid = oscillator:spawn_link(self(), Period, {}),
   io:format("~p (~p) registered oscillator (~p)...~n", [?MODULE, self(), OscillatorPid]),
     
-  % erlang:monitor(process, ActuatorPid),
-  % The actuator can still be orphaned if this FSM goes down... how do we avoid this?
+  StateData = dict:from_list([
+    {prop_delay, PropDelay},
+    {period, Period},
+    {actuator, ActuatorPid},
+    {oscillator, OscillatorPid}
+  ]),
   
-  StateData  = dict:store(period, Period, dict:new()),
-  StateData1 = dict:store(actuator, ActuatorPid, StateData),
-  StateData2 = dict:store(oscillator, OscillatorPid, StateData1),
-  
-  {ok, ready, StateData2}.
+  {ok, ready, StateData}.
 
 %%--------------------------------------------------------------------
 %% Function: 
@@ -108,28 +118,40 @@ init([]) ->
 %% READY
 %%-------------------------
 
-ready({trigger, _Data}, StateData) ->
-  io:format("~p (~p) event received: ready -> signaling~n", [?MODULE, self()]),
+ready({trigger, _Data}, State) ->
+  io:format("~p (~p) trigger event received~n", [?MODULE, self()]),
   
-  ActuatorPid = dict:fetch(actuator, StateData),
-  Period = dict:fetch(period, StateData),
+  ActuatorPid = dict:fetch(actuator, State),
+  Period      = dict:fetch(period, State),
+  PropDelay   = dict:fetch(prop_delay, State),
+ 
+  % Use the propigation delay by calling timer:apply_after/4
+  timer:apply_after(PropDelay, actuator, actuate, [ActuatorPid, {signal, Period}]),
+  %actuator:actuate(ActuatorPid, [{signal, Period}, {prop_delay, PropDelay}]),
+  io:format("wait?~n"),
+  % NB: actuator signal start callback changes state, 
+  % this seems to be the best way to account for propigation delay
+  {next_state, ready, State};
 
-  actuator:actuate(ActuatorPid, {signal, Period}),
-  {next_state, signaling, StateData};
+ready(started, State) ->
+  io:format("~p (~p) event received (started): ready -> signaling~n", [?MODULE, self()]),
+  {next_state, signaling, State};
   
-ready(timeout, StateData) ->
+ready(timeout, State) ->
   % reset the signaler for next signal
   io:format("ready(timeout)~n"),
-  {next_state, ready, StateData};
+  {next_state, ready, State};
   
-ready(stimulate, StateData) ->
+ready(stimulate, State) ->
   io:format("ready(stimulate)~n"),
-  {_, Pid} = dict:find(oscillator, StateData),
-  Pid ! stimulate,
-  {next_state, ready, StateData};
-  
-ready(_Event, StateData) ->
-  {next_state, ready, StateData}.
+  Oscillator = dict:fetch(oscillator, State),
+  Oscillator ! stimulate,
+  {next_state, ready, State};
+
+%% catch all  
+ready(_Event, State) ->
+  io:format("ready(catchall)~n"),
+  {next_state, ready, State}.
 
 %%-------------------------
 %% SIGNALING
@@ -140,7 +162,11 @@ signaling({finished, _Data}, StateData) ->
   io:format("~p (~p) event received (finished): signaling -> ready~n", [?MODULE, self()]),
   %{_Status, Timeout} = dict:find(period, StateData),
   {next_state, ready, StateData};
-  
+
+signaling(stimulate, StateData) ->
+  io:format("BLOCKED ... ooo, face :("),
+  {next_state, signaling, StateData};
+    
 % In the signaling state if a trigger is received, there is nothing to do.
 signaling(_Event, StateData) ->
   {next_state, signaling, StateData}.
