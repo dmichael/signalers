@@ -1,0 +1,1 @@
+gcc -o extprg -I/opt/local/lib/erlang/lib/erl_interface-3.6.2/include -L/opt/local/lib/erlang/lib/erl_interface-3.6.2/lib complex.c erl_comm.c ei.c -lerl_interface -lei
